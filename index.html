@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Carte 300 m — Collaboration en temps réel</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+  <style>
+    :root { --bg:#0b1220; --panel:#111a2b; --text:#eef2ff; --muted:#9fb0d9; --accent:#ff4d4f; }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:1200px;margin:0 auto;padding:24px}
+    .card{background:var(--panel);border-radius:16px;padding:18px;box-shadow:0 10px 28px rgba(0,0,0,.25)}
+    h1{margin:0 0 8px;font-size:1.4rem}
+    label{font-size:.9rem;color:var(--muted);display:block;margin:6px 0}
+    input, button{font:inherit}
+    input[type="text"], input[type="number"], input[type="color"]{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #243356;background:#0c1531;color:var(--text);outline:none}
+    input::placeholder{color:#6f7fb2}
+    .grid{display:grid;grid-template-columns:1.1fr .9fr .7fr .7fr;gap:12px}
+    @media (max-width:1000px){.grid{grid-template-columns:1fr}}
+    .row{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;align-items:center}
+    button{appearance:none;border:0;border-radius:14px;padding:12px 16px;background:var(--accent);color:white;font-weight:700;cursor:pointer;box-shadow:0 8px 18px rgba(255,77,79,.35)}
+    button.secondary{background:#2a375a;box-shadow:none;font-weight:600}
+    .mapwrap{margin-top:14px;border-radius:14px;overflow:hidden;border:1px solid #203058}
+    #map{height:560px;width:100%}
+    .small{font-size:.85rem;color:#9db0e2}
+    .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+    .footer{margin-top:8px;color:#7f93ca;font-size:.8rem}
+    .poi-grid{display:grid;grid-template-columns:1.2fr .5fr .7fr .9fr;gap:10px;margin:10px 0}
+    @media (max-width:900px){.poi-grid{grid-template-columns:1fr 1fr}}
+    #poiList{margin-top:6px;display:flex;flex-direction:column;gap:6px}
+    .poi-item{display:flex;align-items:center;gap:8px;background:#0c1531;border:1px solid #233355;border-radius:10px;padding:6px 10px}
+    .poi-item button{padding:6px 10px}
+    .dot{width:10px;height:10px;border-radius:999px;display:inline-block;border:1px solid #000}
+    /* pastille rouge draggable */
+    .pin{width:14px;height:14px;border-radius:999px;background:#ff3b30;border:2px solid #ffffff;box-shadow:0 0 0 2px #ff3b30}
+    .badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#1b2743;border:1px solid #2e3b63;color:#a6b5e5;font-size:.75rem}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Carte rayon de 300 m — Collaboration</h1>
+
+      <!-- Barre de session collaborative -->
+      <div class="row">
+        <div style="flex:1;min-width:220px">
+          <label for="room">Code de session (ex: MASC-42)</label>
+          <input id="room" type="text" placeholder="Entrez un code partagé"/>
+        </div>
+        <button id="join">Créer / Rejoindre</button>
+        <button id="reset" class="secondary" title="Réinitialiser la session (efface le contenu)">Réinitialiser</button>
+        <span id="roomInfo" class="badge">Hors session</span>
+      </div>
+
+      <!-- Contrôles d'adresse/rayon -->
+      <div class="grid" style="margin-top:10px">
+        <div>
+          <label for="addr">Adresse (priorise Mascouche, QC)</label>
+          <input id="addr" type="text" placeholder="ex. 320 Rue Sainte-Catherine O" />
+        </div>
+        <div>
+          <label for="radius">Rayon (mètres)</label>
+          <input id="radius" type="number" value="300" min="50" max="2000" step="10" />
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button id="search">Rechercher et tracer</button>
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button id="export" class="secondary" title="Exporter la vue de carte en PNG">Exporter en PNG</button>
+        </div>
+      </div>
+
+      <!-- POI -->
+      <h2 class="small" style="margin-top:12px;">Points d’intérêt</h2>
+      <div class="poi-grid">
+        <input id="poiName" type="text" placeholder="Nom du point (optionnel)" />
+        <input id="poiColor" type="color" value="#ff3b30" />
+        <button id="addPoi" class="secondary" title="Ajouter un point au centre de la carte">Ajouter au centre</button>
+        <button id="toggleClick" class="secondary" title="Basculer le mode ajout par clic">Ajouter par clic : OFF</button>
+      </div>
+      <div id="poiList" class="small"></div>
+
+      <!-- Carte -->
+      <div class="mapwrap"><div id="map"></div></div>
+      <div class="footer small">Carte © <a class="mono" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>. Tuiles: <span class="mono">tile.openstreetmap.org</span>. Merci de garder l’attribution visible.</div>
+      <div class="small" id="status"></div>
+    </div>
+  </div>
+
+  <!-- Leaflet -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+  <!-- Export helper -->
+  <script src="https://unpkg.com/leaflet-image@latest/leaflet-image.js"></script>
+  <!-- Firebase (compat) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script>
+  (function(){
+    // ====== UI refs ======
+    const addrEl = document.getElementById('addr');
+    const radiusEl = document.getElementById('radius');
+    const searchBtn = document.getElementById('search');
+    const exportBtn = document.getElementById('export');
+    const resetBtn = document.getElementById('reset');
+    const statusEl = document.getElementById('status');
+
+    const poiNameEl = document.getElementById('poiName');
+    const poiColorEl = document.getElementById('poiColor');
+    const addPoiBtn = document.getElementById('addPoi');
+    const toggleClickBtn = document.getElementById('toggleClick');
+    const poiListEl = document.getElementById('poiList');
+
+    const roomEl = document.getElementById('room');
+    const joinBtn = document.getElementById('join');
+    const roomInfo = document.getElementById('roomInfo');
+
+    function setStatus(t){ statusEl.textContent = t || ''; }
+
+    // ====== Map init ======
+    const map = L.map('map', { preferCanvas: true });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors',
+      crossOrigin: true
+    }).addTo(map);
+    // Mascouche par défaut
+    map.setView([45.749, -73.601], 13);
+
+    const poiLayer = L.layerGroup().addTo(map);
+    const drawLayer = new L.FeatureGroup().addTo(map);
+
+    // outils de dessin (surlignage)
+    const drawControl = new L.Control.Draw({
+      edit: { featureGroup: drawLayer },
+      draw: {
+        polyline: { shapeOptions: { color: '#ffd43b', weight: 6, opacity: 0.9 } },
+        polygon:  { shapeOptions: { color: '#ffd43b', weight: 2, fillColor:'#ffd43b', fillOpacity: 0.3 } },
+        rectangle:{ shapeOptions: { color: '#ffd43b', weight: 2, fillColor:'#ffd43b', fillOpacity: 0.3 } },
+        circle: false, circlemarker: false, marker: false
+      }
+    });
+    map.addControl(drawControl);
+
+    let clickAdd = false;
+    let centerMarker = null; // draggable center
+    let circle = null;
+    let pois = [];
+
+    // ====== Firebase init (REMPLACE par les valeurs de TON projet) ======
+    const firebaseConfig = {
+      apiKey: "REPLACE_ME",
+      authDomain: "REPLACE_ME.firebaseapp.com",
+      databaseURL: "https://carte-perimetre-default-rtdb.firebaseio.com",
+      projectId: "REPLACE_ME",
+      storageBucket: "REPLACE_ME.appspot.com",
+      messagingSenderId: "REPLACE_ME",
+      appId: "REPLACE_ME"
+    };
+    const app = firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    const auth = firebase.auth();
+
+    // Auth anonyme + couleur par utilisateur
+    const myColor = (()=>{
+      const palette = ['#ffd43b','#4dabf7','#69db7c','#ff8787','#b197fc','#f783ac','#74c0fc','#63e6be'];
+      return palette[Math.floor(Math.random()*palette.length)];
+    })();
+    let myUid = null;
+    auth.signInAnonymously().catch(console.error);
+    auth.onAuthStateChanged(u=>{ myUid = u ? u.uid : null; });
+
+    // ====== Collaboration by room code ======
+    let roomRef = null;           // /rooms/{code}
+    let syncing = false;          // avoid feedback loops
+
+    // Présence temps réel
+    let presenceRef = null;
+    function setupPresence(code){
+      if(!myUid) return;
+      presenceRef = db.ref('rooms/'+code+'/presence/'+myUid);
+      presenceRef.set({ since: firebase.database.ServerValue.TIMESTAMP, color: myColor });
+      presenceRef.onDisconnect().remove();
+      // compteur
+      db.ref('rooms/'+code+'/presence').on('value', snap =>{
+        const n = snap.exists() ? Object.keys(snap.val()).length : 0;
+        roomInfo.textContent = 'Session: '+code+' — '+n+' en ligne';
+      });
+    }
+
+    function currentState(){
+      return {
+        center: centerMarker ? centerMarker.getLatLng() : map.getCenter(),
+        radius: Math.max(50, parseInt(radiusEl.value,10) || 300),
+        pois: pois,
+        drawings: exportDrawingsGeoJSON()
+      };
+    }
+
+    // Conserve la couleur/auteur dans les propriétés GeoJSON
+    function exportDrawingsGeoJSON(){
+      const fc = { type:'FeatureCollection', features: [] };
+      drawLayer.eachLayer(l =>{
+        let gj = (l.toGeoJSON && l.toGeoJSON()) || null;
+        if(!gj) return;
+        if(!gj.properties) gj.properties = {};
+        // garder style/couleur
+        gj.properties.color = (l.options && (l.options.color || l.options.fillColor)) || '#ffd43b';
+        if(myUid) gj.properties.author = myUid;
+        fc.features.push(gj);
+      });
+      return fc;
+    }
+
+    function applyState(s){
+      syncing = true;
+      try{
+        if(!s) return;
+        const R = Math.max(50, parseInt(s.radius, 10) || 300);
+        const C = s.center || map.getCenter();
+
+        // draw center + circle
+        if(centerMarker){ map.removeLayer(centerMarker); }
+        if(circle){ map.removeLayer(circle); }
+        centerMarker = L.marker([C.lat, C.lng], {
+          draggable: true,
+          icon: L.divIcon({ className: '', html: '<div class="pin"></div>', iconSize: [16,16], iconAnchor: [8,8] })
+        }).addTo(map);
+        circle = L.circle([C.lat, C.lng], {
+          radius: R, color: '#ff3b30', weight:3, fillColor:'#ff3b30', fillOpacity:.25, renderer: L.canvas()
+        }).addTo(map);
+        centerMarker.on('drag', ()=>{ circle.setLatLng(centerMarker.getLatLng()); });
+        centerMarker.on('dragend', ()=>{ circle.setLatLng(centerMarker.getLatLng()); pushState(); });
+        radiusEl.value = R;
+
+        // POIs
+        pois = Array.isArray(s.pois) ? s.pois : [];
+        rebuildPoiLayers();
+        renderPoiList();
+
+        // drawings
+        drawLayer.clearLayers();
+        if(s.drawings){
+          L.geoJSON(s.drawings, {
+            style: f => ({ color: f.properties?.color || '#ffd43b', weight: f.geometry?.type==='LineString'?6:2, fillColor: f.properties?.color || '#ffd43b', fillOpacity: 0.3 })
+          }).eachLayer(l => drawLayer.addLayer(l));
+        }
+      } finally {
+        syncing = false;
+      }
+    }
+
+    function pushState(){
+      if(!roomRef || syncing) return;
+      const s = currentState();
+      roomRef.child('state').set(s);
+    }
+
+    // ====== Geocode (priorise Mascouche) ======
+    async function geocode(q){
+      const lang = (navigator.language || 'fr-CA');
+      const base = new URL('https://nominatim.openstreetmap.org/search');
+      base.searchParams.set('format','jsonv2'); base.searchParams.set('limit','1'); base.searchParams.set('accept-language', lang);
+      const VB_LEFT=-73.72, VB_TOP=45.82, VB_RIGHT=-73.48, VB_BOTTOM=45.67; // Mascouche
+      async function fetchOnce(u){ const r=await fetch(u.toString(),{headers:{'Accept':'application/json'}}); if(!r.ok) return null; const j=await r.json(); return (Array.isArray(j)&&j.length>0)?j[0]:null; }
+      {
+        const u=new URL(base); u.searchParams.set('q', q); u.searchParams.set('countrycodes','ca'); u.searchParams.set('viewbox', `${VB_LEFT},${VB_TOP},${VB_RIGHT},${VB_BOTTOM}`); u.searchParams.set('bounded','1');
+        const hit=await fetchOnce(u); if(hit) return { lat:+hit.lat, lon:+hit.lon, display:hit.display_name };
+      }
+      {
+        const u=new URL(base); u.searchParams.set('q', `${q}, Mascouche, QC`); u.searchParams.set('countrycodes','ca');
+        const hit=await fetchOnce(u); if(hit) return { lat:+hit.lat, lon:+hit.lon, display:hit.display_name };
+      }
+      {
+        const u=new URL(base); u.searchParams.set('q', q); u.searchParams.set('countrycodes','ca');
+        const hit=await fetchOnce(u); if(hit) return { lat:+hit.lat, lon:+hit.lon, display:hit.display_name };
+      }
+      {
+        const u=new URL(base); u.searchParams.set('q', q);
+        const hit=await fetchOnce(u); if(hit) return { lat:+hit.lat, lon:+hit.lon, display:hit.display_name };
+      }
+      throw new Error('Adresse introuvable');
+    }
+
+    // ====== Draw circle & center ======
+    function draw(lat, lon, radius){
+      if (centerMarker) { map.removeLayer(centerMarker); }
+      if (circle) { map.removeLayer(circle); }
+      centerMarker = L.marker([lat, lon], {
+        draggable: true,
+        icon: L.divIcon({ className: '', html: '<div class="pin"></div>', iconSize: [16,16], iconAnchor: [8,8] })
+      });
+      circle = L.circle([lat, lon], {
+        radius: radius, color:'#ff3b30', weight:3, fillColor:'#ff3b30', fillOpacity:.25, renderer:L.canvas()
+      });
+      centerMarker.addTo(map); circle.addTo(map);
+      centerMarker.on('drag', ()=>{ circle.setLatLng(centerMarker.getLatLng()); });
+      centerMarker.on('dragend', ()=>{ circle.setLatLng(centerMarker.getLatLng()); pushState(); });
+      map.fitBounds(circle.getBounds(), { padding: [30,30] });
+    }
+
+    // ====== POIs ======
+    function renderPoiList(){ if(!poiListEl) return; poiListEl.innerHTML = pois.map((p,i)=>`<div class="poi-item"><span class="dot" style="background:${p.color}"></span>${p.name||('Point '+(i+1))}<span style="flex:1"></span><button class="del" data-i="${i}">Supprimer</button></div>`).join(''); }
+    function rebuildPoiLayers(){ poiLayer.clearLayers(); pois.forEach(p=>{ const cm=L.circleMarker([p.lat,p.lon],{radius:6,color:p.color,weight:2,fillColor:p.color,fillOpacity:1,renderer:L.canvas()}).addTo(poiLayer); if(p.name){ cm.bindTooltip(p.name,{permanent:true,direction:'right',offset:[10,0]}); } }); }
+    function addPoi(lat, lon, name, color){ pois.push({lat, lon, name: name||'', color: color||'#ff3b30'}); rebuildPoiLayers(); renderPoiList(); pushState(); }
+
+    // ====== Search/run ======
+    async function run(){
+      const q = addrEl.value.trim();
+      const radius = Math.max(50, parseInt(radiusEl.value, 10) || 300);
+      if(!q){ addrEl.focus(); return; }
+      setStatus('Géocodage…'); searchBtn.disabled = true;
+      try{
+        const p = await geocode(q); setStatus('Trouvé : ' + p.display);
+        draw(p.lat, p.lon, radius); pushState();
+      }catch(err){ console.error(err); setStatus('Erreur : ' + err.message); }
+      finally{ searchBtn.disabled = false; }
+    }
+
+    // ====== Export PNG (Lettre paysage 300 DPI) ======
+    async function exportPNG(){
+      setStatus('Génération du PNG…'); exportBtn.disabled = true;
+      try{
+        if (typeof window.leafletImage !== 'function') throw new Error('Module d’export non chargé');
+        // Retirer temporairement le marker DivIcon pendant la capture
+        const hadCenter = !!(centerMarker && map.hasLayer(centerMarker));
+        const centerBackup = (hadCenter && centerMarker.getLatLng()) ? centerMarker.getLatLng() : null;
+        if (hadCenter) { map.removeLayer(centerMarker); }
+
+        window.leafletImage(map, function(err, canvas){
+          // Ré-ajout immédiat du marker à l'écran
+          if (hadCenter && centerBackup) { centerMarker.setLatLng(centerBackup); centerMarker.addTo(map); }
+          if(err){ setStatus('Échec de l’export : ' + err.message); exportBtn.disabled = false; return; }
+          try{
+            const ctx = canvas.getContext('2d');
+            // centre et rayon en pixels
+            let centerLL = circle?.getLatLng?.() || centerBackup || map.getCenter();
+            const radiusMeters = Math.max(50, parseInt(radiusEl.value,10) || 300);
+            const R = 6378137; const toRad = d=>d*Math.PI/180; const toDeg = r=>r*180/Math.PI;
+            function destPoint(lat,lng,dist,bearing){ const δ=dist/R, θ=toRad(bearing), φ1=toRad(lat), λ1=toRad(lng); const sinφ1=Math.sin(φ1), cosφ1=Math.cos(φ1), sinδ=Math.sin(δ), cosδ=Math.cos(δ); const sinφ2=sinφ1*cosδ + cosφ1*sinδ*Math.cos(θ); const φ2=Math.asin(sinφ2); const y=Math.sin(θ)*sinδ*cosφ1; const x=cosδ - sinφ1*sinφ2; const λ2=λ1+Math.atan2(y,x); return {lat:toDeg(φ2), lng:((toDeg(λ2)+540)%360)-180}; }
+            const centerPt = map.latLngToContainerPoint(centerLL); const eastLL = destPoint(centerLL.lat, centerLL.lng, radiusMeters, 90); const eastPt = map.latLngToContainerPoint(eastLL); const pixelRadius = Math.hypot(eastPt.x-centerPt.x, eastPt.y-centerPt.y);
+            // cercle
+            ctx.save(); ctx.beginPath(); ctx.arc(centerPt.x, centerPt.y, pixelRadius, 0, Math.PI*2); ctx.fillStyle='rgba(255,59,48,0.25)'; ctx.fill(); ctx.lineWidth=3; ctx.strokeStyle='#ff3b30'; ctx.stroke(); ctx.restore();
+            // POI
+            if (Array.isArray(pois)){
+              pois.forEach(p=>{ const pt = map.latLngToContainerPoint([p.lat,p.lon]); ctx.save(); ctx.beginPath(); ctx.arc(pt.x, pt.y, 6, 0, Math.PI*2); ctx.fillStyle=p.color||'#ff3b30'; ctx.fill(); ctx.lineWidth=2; ctx.strokeStyle='#000'; ctx.stroke(); ctx.restore(); if(p.name){ ctx.save(); ctx.font='16px sans-serif'; ctx.textBaseline='middle'; ctx.lineWidth=3; ctx.strokeStyle='rgba(255,255,255,0.95)'; ctx.strokeText(p.name, pt.x+10, pt.y); ctx.fillStyle='#111'; ctx.fillText(p.name, pt.x+10, pt.y); ctx.restore(); } });
+            }
+            // point central
+            ctx.save(); ctx.beginPath(); ctx.arc(centerPt.x, centerPt.y, 4, 0, Math.PI*2); ctx.fillStyle='#ff3b30'; ctx.fill(); ctx.restore();
+
+            // Mise en page Lettre paysage 300 DPI
+            const DPI=300, W_IN=11, H_IN=8.5, MARGIN=0.5; const PAGE_W=Math.round(W_IN*DPI), PAGE_H=Math.round(H_IN*DPI); const INNER_W=Math.round((W_IN-2*MARGIN)*DPI), INNER_H=Math.round((H_IN-2*MARGIN)*DPI);
+            const out=document.createElement('canvas'); out.width=PAGE_W; out.height=PAGE_H; const octx=out.getContext('2d'); octx.fillStyle='#ffffff'; octx.fillRect(0,0,PAGE_W,PAGE_H);
+            const srcW=canvas.width, srcH=canvas.height; const scale=Math.min(INNER_W/srcW, INNER_H/srcH); const destW=Math.round(srcW*scale), destH=Math.round(srcH*scale); const destX=Math.round((PAGE_W-destW)/2), destY=Math.round((PAGE_H-destH)/2);
+            octx.imageSmoothingQuality='high'; octx.drawImage(canvas,0,0,srcW,srcH,destX,destY,destW,destH);
+
+            // téléchargement
+            out.toBlob(function(blob){ const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.download='map-300m-letter-landscape-300dpi.png'; a.href=url; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(()=>URL.revokeObjectURL(url), 800); setStatus('PNG (Lettre paysage) téléchargé.'); }, 'image/png');
+          }catch(e){ setStatus('Exportation bloquée: ' + e.message); const dataUrl = canvas.toDataURL('image/png'); window.open(dataUrl, '_blank'); }
+          exportBtn.disabled = false;
+        });
+      }catch(err){ console.error(err); setStatus('Erreur d’export : ' + err.message); exportBtn.disabled = false; }
+    }
+
+    // ====== Draw events sync ======
+    map.on(L.Draw.Event.CREATED, function (e) {
+      // attribuer couleur auteur
+      if(e.layer && e.layer.setStyle){ e.layer.setStyle({ color: myColor, fillColor: myColor }); }
+      drawLayer.addLayer(e.layer); pushState();
+    });
+    map.on(L.Draw.Event.EDITED, function () { pushState(); });
+    map.on(L.Draw.Event.DELETED, function () { pushState(); });
+
+    // ====== UI events ======
+    searchBtn.addEventListener('click', run);
+    addrEl.addEventListener('keydown', e=>{ if(e.key==='Enter'){ run(); }});
+    exportBtn.addEventListener('click', exportPNG);
+
+    addPoiBtn.addEventListener('click', ()=>{ const c=map.getCenter(); addPoi(c.lat, c.lng, poiNameEl.value.trim(), poiColorEl.value); });
+    toggleClickBtn.addEventListener('click', ()=>{ clickAdd = !clickAdd; toggleClickBtn.textContent = 'Ajouter par clic : ' + (clickAdd ? 'ON' : 'OFF'); });
+    map.on('click', (e)=>{ if(clickAdd){ addPoi(e.latlng.lat, e.latlng.lng, poiNameEl.value.trim(), poiColorEl.value); } });
+    poiListEl.addEventListener('click', (e)=>{ if(e.target.classList.contains('del')){ const i=parseInt(e.target.dataset.i,10); if(!isNaN(i)){ pois.splice(i,1); rebuildPoiLayers(); renderPoiList(); pushState(); } } });
+
+    // ====== Room join / reset ======
+    function joinRoom(code){
+      if(!code) { roomRef = null; roomInfo.textContent = 'Hors session'; return; }
+      roomRef = db.ref('rooms/'+code);
+      roomInfo.textContent = 'Session: '+code+' — connexion…';
+      // présence
+      setupPresence(code);
+      // Listen state
+      roomRef.child('state').on('value', snap => { const s = snap.val(); if(s) applyState(s); });
+      // Initialize if empty
+      roomRef.child('state').once('value').then(snap => { if(!snap.exists()){ pushState(); } });
+    }
+    joinBtn.addEventListener('click', ()=>{ joinRoom(roomEl.value.trim()); });
+
+    resetBtn.addEventListener('click', ()=>{
+      const code = roomEl.value.trim(); if(!code || !roomRef) return;
+      if(!confirm('Réinitialiser la session « '+code+' » ? Tous les dessins/POI seront effacés.')) return;
+      roomRef.remove().then(()=>{ setStatus('Session réinitialisée.'); joinRoom(code); });
+    });
+
+    // ====== POI helpers ======
+    function rebuildPoiLayers(){ poiLayer.clearLayers(); pois.forEach(p=>{ const cm=L.circleMarker([p.lat,p.lon],{radius:6,color:p.color,weight:2,fillColor:p.color,fillOpacity:1,renderer:L.canvas()}).addTo(poiLayer); if(p.name){ cm.bindTooltip(p.name,{permanent:true,direction:'right',offset:[10,0]}); } }); }
+    function addPoi(lat, lon, name, color){ pois.push({lat, lon, name: name||'', color: color||'#ff3b30'}); rebuildPoiLayers(); renderPoiList(); pushState(); }
+    function renderPoiList(){ if(!poiListEl) return; poiListEl.innerHTML = pois.map((p,i)=>`<div class=\"poi-item\"><span class=\"dot\" style=\"background:${p.color}\"></span>${p.name||('Point '+(i+1))}<span style=\"flex:1\"></span><button class=\"del\" data-i=\"${i}\">Supprimer</button></div>`).join(''); }
+
+  })();
+  </script>
+</body>
+</html>

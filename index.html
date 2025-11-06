@@ -154,13 +154,14 @@
 
     // ====== Firebase init (REMPLACE par les valeurs de TON projet) ======
     const firebaseConfig = {
-      apiKey: "REPLACE_ME",
-      authDomain: "REPLACE_ME.firebaseapp.com",
-      databaseURL: "https://carte-perimetre-default-rtdb.firebaseio.com",
-      projectId: "REPLACE_ME",
-      storageBucket: "REPLACE_ME.appspot.com",
-      messagingSenderId: "REPLACE_ME",
-      appId: "REPLACE_ME"
+      apiKey: "AIzaSyA_BFJ14tQMhgNVcyTyi4tU02wBl8yBovU",
+  authDomain: "carte-perimetre.firebaseapp.com",
+  databaseURL: "https://carte-perimetre-default-rtdb.firebaseio.com",
+  projectId: "carte-perimetre",
+  storageBucket: "carte-perimetre.firebasestorage.app",
+  messagingSenderId: "1018235415713",
+  appId: "1:1018235415713:web:52a1fb416e121617fcd4e0",
+  measurementId: "G-0YVPM0KFXB"
     };
     const app = firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
@@ -182,9 +183,28 @@
     // Présence temps réel
     let presenceRef = null;
     function setupPresence(code){
-      if(!myUid) return;
-      presenceRef = db.ref('rooms/'+code+'/presence/'+myUid);
-      presenceRef.set({ since: firebase.database.ServerValue.TIMESTAMP, color: myColor });
+      const presenceRoot = db.ref('rooms/'+code+'/presence');
+      // Always attach the counter listener, even if UID not ready yet
+      presenceRoot.on('value', snap =>{
+        const n = snap.exists() ? Object.keys(snap.val()).length : 0;
+        roomInfo.textContent = 'Session: '+code+' — '+n+' en ligne';
+      });
+      // Once we have a UID, set our own presence and clean up on disconnect
+      function setSelfPresence(){
+        if(!myUid) return;
+        const selfRef = presenceRoot.child(myUid);
+        selfRef.set({ since: firebase.database.ServerValue.TIMESTAMP, color: myColor });
+        selfRef.onDisconnect().remove();
+      }
+      if(myUid){
+        setSelfPresence();
+      } else {
+        const unsub = auth.onAuthStateChanged(u=>{
+          myUid = u ? u.uid : null;
+          if(myUid){ setSelfPresence(); if(typeof unsub==='function') unsub(); }
+        });
+      }
+    });
       presenceRef.onDisconnect().remove();
       // compteur
       db.ref('rooms/'+code+'/presence').on('value', snap =>{
@@ -398,7 +418,13 @@
       // Initialize if empty
       roomRef.child('state').once('value').then(snap => { if(!snap.exists()){ pushState(); } });
     }
-    joinBtn.addEventListener('click', ()=>{ joinRoom(roomEl.value.trim()); });
+    joinBtn.addEventListener('click', ()=>{
+      const code = roomEl.value.trim();
+      if(!code){ roomRef = null; roomInfo.textContent = 'Hors session'; return; }
+      // Show immediate feedback while presence counter hooks up
+      roomInfo.textContent = 'Session: '+code+' — connexion…';
+      joinRoom(code);
+    }); });
 
     resetBtn.addEventListener('click', ()=>{
       const code = roomEl.value.trim(); if(!code || !roomRef) return;

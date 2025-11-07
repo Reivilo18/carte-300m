@@ -80,10 +80,15 @@
       <div class="poi-grid">
         <input id="poiName" type="text" placeholder="Nom du point (optionnel)" />
         <input id="poiColor" type="color" value="#ff3b30" />
-        <button id="addPoi" class="secondary" title="Ajouter un point au centre de la carte">Ajouter au centre</button>
-        <button id="toggleClick" class="secondary" title="Basculer le mode ajout par clic">Ajouter par clic : OFF</button>
+        <button id="addPoiOnce" class="secondary" title="Ajouter un point en cliquant sur la carte">Ajouter</button>
       </div>
       <div id="poiList" class="small"></div>
+
+      <!-- Couleur -->
+      <div class="row" id="drawColorRow" style="margin-top:6px;align-items:center">
+        <label for="drawColor" class="small" style="margin-right:8px;">Couleur</label>
+        <input id="drawColor" type="color" value="#ffd43b" style="width:52px;height:36px;padding:0;border-radius:8px;border:1px solid #243356;background:#0c1531;" />
+      </div>
 
       <!-- Carte -->
       <div class="mapwrap"><div id="map"></div></div>
@@ -113,9 +118,9 @@
 
     const poiNameEl = document.getElementById('poiName');
     const poiColorEl = document.getElementById('poiColor');
-    const addPoiBtn = document.getElementById('addPoi');
-    const toggleClickBtn = document.getElementById('toggleClick');
+    const addPoiOnceBtn = document.getElementById('addPoiOnce');
     const poiListEl = document.getElementById('poiList');
+    const drawColorEl = document.getElementById('drawColor');
 
     const roomEl = document.getElementById('room');
     const joinBtn = document.getElementById('join');
@@ -148,12 +153,22 @@
     });
     map.addControl(drawControl);
 
+    // Appliquer la couleur courante aux outils de dessin
+    function applyDrawColor(){
+      const c = (drawColorEl && drawColorEl.value) || '#ffd43b';
+      drawControl.setDrawingOptions({
+        polyline:  { shapeOptions: { color: c, weight: 6, opacity: 0.9 } },
+        polygon:   { shapeOptions: { color: c, weight: 2, fillColor: c, fillOpacity: 0.3 } },
+        rectangle: { shapeOptions: { color: c, weight: 2, fillColor: c, fillOpacity: 0.3 } }
+      });
+    }
+
     // ====== (pas d'Undo/Redo) ======
     let history = []; let histIdx = -1; // gardés pour compat
     function snapshotDrawings(){}
     function updateUndoRedoButtons(){}
 
-    let clickAdd = false;
+    let addPoiArmed = false;
 
     let centerMarker = null; // centre
     let circle = null;       // cercle
@@ -182,6 +197,9 @@
     let myUid = null;
     auth.signInAnonymously().catch(console.error);
     auth.onAuthStateChanged(u=>{ myUid = u ? u.uid : null; });
+
+    // Définir la couleur par défaut du sélecteur sur la couleur d'utilisateur
+    if (drawColorEl) { drawColorEl.value = myColor; }
 
     // ====== Collaboration by room code ======
     let roomRef = null;           // /rooms/{code}
@@ -462,7 +480,8 @@
 
     // ====== Draw events sync ======
     map.on(L.Draw.Event.CREATED, function (e) {
-      if(e.layer && e.layer.setStyle){ e.layer.setStyle({ color: myColor, fillColor: myColor }); }
+      const c = (drawColorEl && drawColorEl.value) || myColor;
+      if(e.layer && e.layer.setStyle){ e.layer.setStyle({ color: c, fillColor: c }); }
       drawLayer.addLayer(e.layer); snapshotDrawings(); pushState();
     });
     map.on(L.Draw.Event.EDITED, function () { snapshotDrawings(); pushState(); });
@@ -473,19 +492,44 @@
     addrEl.addEventListener('keydown', e=>{ if(e.key==='Enter'){ run(); }});
     exportBtn.addEventListener('click', exportPNG);
 
-    addPoiBtn.addEventListener('click', ()=>{ const c=map.getCenter(); addPoi(c.lat, c.lng, poiNameEl.value.trim(), poiColorEl.value); });
-    toggleClickBtn.addEventListener('click', ()=>{ clickAdd = !clickAdd; toggleClickBtn.textContent = 'Ajouter par clic : ' + (clickAdd ? 'ON' : 'OFF'); });
+    // Changement de couleur de dessin => mettre à jour les options de la toolbar
+    if (drawColorEl) {
+      drawColorEl.addEventListener('input', applyDrawColor);
+      applyDrawColor();
+    }
+
+    // Armement d'un ajout de POI au prochain clic sur la carte
+    if (addPoiOnceBtn){
+      addPoiOnceBtn.addEventListener('click', ()=>{
+        addPoiArmed = true;
+        setStatus('Cliquez sur la carte pour placer le point d’intérêt…');
+      });
+    }
+
+    // Clic sur la carte : soit place le POI armé, soit crée le cercle s'il n'existe pas encore
     map.on('click', (e)=>{
-      if(clickAdd){
+      if (addPoiArmed) {
         addPoi(e.latlng.lat, e.latlng.lng, poiNameEl.value.trim(), poiColorEl.value);
-      } else if (canCreateCircleNow()){
+        addPoiArmed = false;
+        setStatus('Point d’intérêt ajouté.');
+        return;
+      }
+      if (canCreateCircleNow()){
         const r = Math.max(50, parseInt(radiusEl.value,10) || 300);
-        // Premier clic uniquement -> centre fixe (non déplaçable)
         draw(e.latlng.lat, e.latlng.lng, r, true);
         pushState();
       }
     });
+
+    // Suppression d'un POI depuis la liste
     poiListEl.addEventListener('click', (e)=>{ if(e.target.classList.contains('del')){ const i=parseInt(e.target.dataset.i,10); if(!isNaN(i)){ pois.splice(i,1); rebuildPoiLayers(); renderPoiList(); pushState(); } } });
+
+    // Permettre la mise à jour du rayon en direct
+    radiusEl.addEventListener('change', ()=>{
+      const r = Math.max(50, parseInt(radiusEl.value,10) || 300);
+      if(circle){ circle.setRadius(r); }
+      pushState();
+    });
 
     // ====== Reset complet (quitte la session et nettoie la page) ======
     function resetPage(){
@@ -509,7 +553,7 @@
       // Réinitialiser les champs
       addrEl.value='';
       radiusEl.value=300;
-      clickAdd = false; if(toggleClickBtn) toggleClickBtn.textContent='Ajouter par clic : OFF';
+      addPoiArmed = false;
 
       // Enlever ?room= de l’URL
       try{
@@ -533,9 +577,10 @@
         console.assert(app && app.options && app.options.projectId === 'carte-perimetre', 'projectId inattendu');
         console.assert(typeof geocode === 'function', 'geocode manquant');
         console.assert(typeof exportPNG === 'function', 'exportPNG manquant');
-        console.assert(typeof clickAdd === 'boolean', 'clickAdd type');
+        console.assert(document.getElementById('addPoiOnce'), 'Bouton Ajouter POI manquant');
         console.assert(document.querySelector('.leaflet-draw-toolbar'), 'Toolbar Leaflet.draw absente');
         console.assert(document.querySelector('.leaflet-draw-edit-remove'), 'Bouton supprimer (gomme) absent');
+        console.assert(document.getElementById('drawColor'), 'Sélecteur de couleur des dessins manquant');
         console.assert(typeof applyState === 'function', 'applyState manquant');
         console.assert(typeof pushState === 'function', 'pushState manquant');
         console.assert(typeof exportDrawingsGeoJSON === 'function', 'exportDrawingsGeoJSON manquant');

@@ -79,8 +79,9 @@
       <h2 class="small" style="margin-top:12px;">Points d’intérêt</h2>
       <div class="poi-grid">
         <input id="poiName" type="text" placeholder="Nom du point (optionnel)" />
-        <input id="poiColor" type="color" value="#ff3b30" />
+        <input id="poiColor" type="color" value="#ff3b30" style="width:52px;height:36px;padding:0;border-radius:8px;border:1px solid #243356;background:#0c1531;appearance:none;" />
         <button id="addPoiOnce" class="secondary" title="Ajouter un point en cliquant sur la carte">Ajouter</button>
+        <span id="poiHint" class="small" style="color:#9fb0d9"></span>
       </div>
       <div id="poiList" class="small"></div>
 
@@ -119,6 +120,7 @@
     const poiNameEl = document.getElementById('poiName');
     const poiColorEl = document.getElementById('poiColor');
     const addPoiOnceBtn = document.getElementById('addPoiOnce');
+    const poiHintEl = document.getElementById('poiHint');
     const poiListEl = document.getElementById('poiList');
     const drawColorEl = document.getElementById('drawColor');
 
@@ -130,11 +132,44 @@
 
     // ====== Map init ======
     const map = L.map('map', { preferCanvas: true });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    // === Basemaps (clair / sombre / satellite) ===
+    const osmLight = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
-      attribution: '&copy; OpenStreetMap contributors',
-      crossOrigin: true
-    }).addTo(map);
+      crossOrigin: true,
+      attribution: '&copy; OpenStreetMap contributors'
+    });
+
+    const esriDark = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19,
+      crossOrigin: true,
+      attribution: 'Tiles &copy; Esri — Esri, HERE, Garmin, FAO, NOAA, USGS, © OpenStreetMap contributors, and the GIS user community'
+    });
+
+    const esriLightGray = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19,
+      crossOrigin: true,
+      attribution: 'Tiles &copy; Esri — Esri, HERE, Garmin, FAO, NOAA, USGS, © OpenStreetMap contributors, and the GIS user community'
+    });
+
+    const esriImagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19,
+      crossOrigin: true,
+      attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics, and the GIS user community'
+    });
+
+    let currentBase = null;
+    function setBase(layer){ if(currentBase){ map.removeLayer(currentBase); } layer.addTo(map); currentBase = layer; }
+
+    // par défaut: clair (OSM)
+    setBase(osmLight);
+
+    // Contrôle de basemap (seulement Clair et Satellite)
+    const baseMaps = {
+      'Clair (OSM)': osmLight,
+      'Satellite (Esri World Imagery)': esriImagery
+    };
+    L.control.layers(baseMaps, {}, { collapsed: false, position: 'topright' }).addTo(map);
+
     // Mascouche par défaut
     map.setView([45.749, -73.601], 13);
 
@@ -153,6 +188,56 @@
     });
     map.addControl(drawControl);
 
+    // ====== Contrôle Mesure (mètres) ======
+    let measuringActive = false;
+    let measureDrawer = null;
+    let measureBtn = null;
+
+    function distMeters(a,b){
+      const R=6371000; const toRad=x=>x*Math.PI/180;
+      const dLat=toRad(b.lat-a.lat), dLng=toRad(b.lng-a.lng);
+      const s1=Math.sin(dLat/2), s2=Math.sin(dLng/2);
+      const va=s1*s1 + Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*s2*s2;
+      return 2*R*Math.atan2(Math.sqrt(va), Math.sqrt(1-va));
+    }
+    function polylineLength(latlngs){
+      if(!Array.isArray(latlngs)) return 0;
+      let m=0; for(let i=1;i<latlngs.length;i++){ m+=distMeters(latlngs[i-1], latlngs[i]); }
+      return m;
+    }
+
+    const MeasureControl = L.Control.extend({
+      onAdd: function(map){
+        const container = L.DomUtil.create('div','leaflet-bar');
+        const a = L.DomUtil.create('a','',container);
+        a.href = '#'; a.title = 'Mesurer (m)'; a.innerHTML = '📏';
+        L.DomEvent.on(a,'click',(ev)=>{
+          L.DomEvent.stop(ev);
+          if(!measureDrawer){
+            measureDrawer = new L.Draw.Polyline(map, {
+              showLength: true, metric: true,
+              shapeOptions: { color:'#ffffff', weight:3, dashArray:'6,4', opacity:1 }
+            });
+          }
+          measuringActive = true;
+          a.classList.add('active');
+          measureBtn = a;
+          // désarmer ajout POI si actif
+          if (typeof addPoiArmed !== 'undefined' && addPoiArmed){
+            addPoiArmed = false;
+            const hint = document.getElementById('poiHint');
+            if(hint) hint.textContent='';
+            const addBtn = document.getElementById('addPoiOnce');
+            if(addBtn){ addBtn.textContent='Ajouter'; addBtn.disabled=false; }
+          }
+          setStatus('Mesure active : cliquez pour tracer, double-cliquez pour terminer, Échap pour annuler.');
+          measureDrawer.enable();
+        });
+        return container;
+      }
+    });
+    map.addControl(new MeasureControl({ position: 'topleft' }));
+
     // Appliquer la couleur courante aux outils de dessin
     function applyDrawColor(){
       const c = (drawColorEl && drawColorEl.value) || '#ffd43b';
@@ -168,7 +253,7 @@
     function snapshotDrawings(){}
     function updateUndoRedoButtons(){}
 
-    let addPoiArmed = false;
+    let addPoiArmed = false; if(poiHintEl) poiHintEl.textContent=''; if(addPoiOnceBtn){ addPoiOnceBtn.textContent='Ajouter'; addPoiOnceBtn.disabled=false; }
 
     let centerMarker = null; // centre
     let circle = null;       // cercle
@@ -408,7 +493,13 @@
         const centerBackup = (hadCenter && centerMarker.getLatLng()) ? centerMarker.getLatLng() : null;
         if (hadCenter) { map.removeLayer(centerMarker); }
 
+        // Pour éviter les soucis CORS lors de l'export, on force temporairement OSM light (CORS-friendly)
+        const prevBase = currentBase;
+        if (prevBase !== osmLight) setBase(osmLight);
+
         window.leafletImage(map, function(err, canvas){
+          // Restaurer le fond initial
+          if (prevBase && prevBase !== osmLight) setBase(prevBase);
           if (hadCenter && centerBackup) { centerMarker.setLatLng(centerBackup); centerMarker.addTo(map); }
           if(err){ setStatus('Échec de l’export : ' + err.message); exportBtn.disabled = false; return; }
           try{
@@ -480,12 +571,33 @@
 
     // ====== Draw events sync ======
     map.on(L.Draw.Event.CREATED, function (e) {
-      const c = (drawColorEl && drawColorEl.value) || myColor;
-      if(e.layer && e.layer.setStyle){ e.layer.setStyle({ color: c, fillColor: c }); }
+      // Si on était en mode mesure, style et label de distance
+      if (measuringActive && e.layer && e.layer.getLatLngs) {
+        const latlngs = e.layer.getLatLngs();
+        const flat = Array.isArray(latlngs[0]) ? latlngs[0] : latlngs;
+        const meters = Math.round(polylineLength(flat));
+        if (e.layer.setStyle) e.layer.setStyle({ color:'#ffffff', weight:3, dashArray:'6,4', opacity:1 });
+        if (e.layer.bindTooltip) e.layer.bindTooltip(`${meters} m`, { permanent:true, direction:'center' }).openTooltip();
+        measuringActive = false;
+        if (measureBtn) measureBtn.classList.remove('active');
+        setStatus(`Mesure: ${meters} m`);
+      } else {
+        const c = (drawColorEl && drawColorEl.value) || myColor;
+        if(e.layer && e.layer.setStyle){ e.layer.setStyle({ color: c, fillColor: c }); }
+      }
       drawLayer.addLayer(e.layer); snapshotDrawings(); pushState();
     });
+
     map.on(L.Draw.Event.EDITED, function () { snapshotDrawings(); pushState(); });
     map.on(L.Draw.Event.DELETED, function () { snapshotDrawings(); pushState(); });
+    map.on(L.Draw.Event.DRAWSTOP, function (e) {
+      // Si on sort du mode polyline sans créer, réinitialiser l’état de mesure
+      if (e.layerType === 'polyline' && measuringActive) {
+        measuringActive = false;
+        if (measureBtn) measureBtn.classList.remove('active');
+        setStatus('Mesure annulée.');
+      }
+    });
 
     // ====== UI events ======
     searchBtn.addEventListener('click', run);
@@ -498,11 +610,24 @@
       applyDrawColor();
     }
 
-    // Armement d'un ajout de POI au prochain clic sur la carte
+    // Armement d'un ajout de POI au prochain clic sur la carte (toggle pour annuler si recliqué)
     if (addPoiOnceBtn){
       addPoiOnceBtn.addEventListener('click', ()=>{
+        if (addPoiArmed) {
+          // Annuler
+          addPoiArmed = false;
+          if (poiHintEl) poiHintEl.textContent = '';
+          addPoiOnceBtn.textContent = 'Ajouter';
+          addPoiOnceBtn.disabled = false; // reste cliquable
+          setStatus('Ajout de point annulé.');
+          return;
+        }
+        // Armer
         addPoiArmed = true;
-        setStatus('Cliquez sur la carte pour placer le point d’intérêt…');
+        if (poiHintEl) poiHintEl.textContent = 'Cliquez sur la carte pour placer le point d’intérêt…';
+        addPoiOnceBtn.textContent = 'Ajouter (actif)';
+        addPoiOnceBtn.disabled = false; // permettre d’annuler en recliquant
+        document.getElementById('map')?.scrollIntoView({behavior:'smooth', block:'center'});
       });
     }
 
@@ -511,7 +636,8 @@
       if (addPoiArmed) {
         addPoi(e.latlng.lat, e.latlng.lng, poiNameEl.value.trim(), poiColorEl.value);
         addPoiArmed = false;
-        setStatus('Point d’intérêt ajouté.');
+        if (poiHintEl) poiHintEl.textContent = 'Point d’intérêt ajouté.';
+        if (addPoiOnceBtn) { addPoiOnceBtn.textContent = 'Ajouter'; addPoiOnceBtn.disabled = false; }
         return;
       }
       if (canCreateCircleNow()){

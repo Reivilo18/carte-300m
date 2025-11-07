@@ -36,15 +36,6 @@
     /* pastille rouge draggable */
     .pin{width:14px;height:14px;border-radius:999px;background:#ff3b30;border:2px solid #ffffff;box-shadow:0 0 0 2px #ff3b30}
     .badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#1b2743;border:1px solid #2e3b63;color:#a6b5e5;font-size:.75rem}
-    /* Toolbar Leaflet intégrée */
-    .leaflet-control.custom-toolbar{background:#111a2b;border:1px solid #203058;border-radius:10px;padding:6px 6px;box-shadow:0 6px 18px rgba(0,0,0,.35)}
-    .custom-toolbar .btn{display:inline-flex;align-items:center;gap:6px;margin:3px;padding:8px 10px;border-radius:8px;border:1px solid #2a375a;background:#1b2743;color:#e6edff;font-size:.9rem;cursor:pointer}
-    .custom-toolbar .btn.active{outline:2px solid #8fb3ff}
-    .custom-toolbar .btn:disabled{opacity:.6;cursor:not-allowed}
-      /* Mini-toolbar Undo/Redo */
-    .leaflet-control.undo-toolbar{background:#111a2b;border:1px solid #203058;border-radius:10px;padding:6px 6px;box-shadow:0 6px 18px rgba(0,0,0,.35);margin-top:6px}
-    .undo-toolbar .btn{display:inline-flex;align-items:center;gap:6px;margin:3px;padding:8px 10px;border-radius:8px;border:1px solid #2a375a;background:#1b2743;color:#e6edff;font-size:.9rem;cursor:pointer}
-    .undo-toolbar .btn:disabled{opacity:.6;cursor:not-allowed}
   </style>
 </head>
 <body>
@@ -60,18 +51,8 @@
         </div>
         <button id="join">Créer / Rejoindre</button>
         <button id="share" class="secondary" title="Copier un lien de partage">Partager</button>
-        <button id="reset" class="secondary" title="Réinitialiser la session (efface le contenu)">Réinitialiser</button>
+        <button id="reset" class="secondary" title="Réinitialiser la page (quitter la session et tout effacer localement)">Réinitialiser</button>
         <span id="roomInfo" class="badge">Hors session</span>
-      </div>
-
-      <!-- Outils dessin simples (cachés ici) -->
-      <div class="row" id="inlineTools" style="margin-top:8px; display:none">
-        <button id="toolSelect" class="secondary" title="Mode normal (sélection/pan)">Sélection</button>
-        <button id="toolPen" class="secondary" title="Dessiner à main levée (Crayon)">Crayon</button>
-        <button id="toolErase" class="secondary" title="Effacer une partie du dessin (Gomme)">Effacer</button>
-        <button id="undo" class="secondary" title="Annuler la dernière modification (Ctrl+Z)">↶ Annuler</button>
-        <button id="redo" class="secondary" title="Rétablir (Ctrl+Y)">↷ Rétablir</button>
-        <span class="small">Astuce : en mode Crayon/Gomme, glissez votre doigt/souris sur la carte.</span>
       </div>
 
       <!-- Contrôles d'adresse/rayon -->
@@ -155,147 +136,7 @@
     const poiLayer = L.layerGroup().addTo(map);
     const drawLayer = new L.FeatureGroup().addTo(map);
 
-    // ===== Outils de dessin simples (Crayon, Gomme, Undo/Redo) =====
-    let tool = 'select'; // 'select' | 'pen' | 'erase'
-    const toolPenBtn = document.getElementById('toolPen');
-    const toolEraseBtn = document.getElementById('toolErase');
-    const toolSelectBtn = document.getElementById('toolSelect');
-    const undoBtn = document.getElementById('undo');
-    const redoBtn = document.getElementById('redo');
-
-    function setTool(t){
-      tool = t;
-      // inline (caché)
-      [toolSelectBtn, toolPenBtn, toolEraseBtn].forEach(b=> b && (b.classList.remove('active'), b.style.outline='none'));
-      if(t==='select' && toolSelectBtn) toolSelectBtn.classList.add('active');
-      if(t==='pen' && toolPenBtn) toolPenBtn.classList.add('active');
-      if(t==='erase' && toolEraseBtn) toolEraseBtn.classList.add('active');
-      // map toolbar (visible)
-      const mSelect = document.getElementById('ctlSelect');
-      const mPen    = document.getElementById('ctlPen');
-      const mErase  = document.getElementById('ctlErase');
-      [mSelect,mPen,mErase].forEach(b=> b && b.classList.remove('active'));
-      if(t==='select' && mSelect) mSelect.classList.add('active');
-      if(t==='pen' && mPen) mPen.classList.add('active');
-      if(t==='erase' && mErase) mErase.classList.add('active');
-    }
-    toolSelectBtn?.addEventListener('click', ()=> setTool('select'));
-    toolPenBtn?.addEventListener('click', ()=> setTool('pen'));
-    toolEraseBtn?.addEventListener('click', ()=> setTool('erase'));
-    setTool('select');
-
-    // Historique (undo/redo) basé sur l'état GeoJSON des dessins
-    let history = []; let histIdx = -1;
-    function snapshotDrawings(){
-      const gj = exportDrawingsGeoJSON();
-      const last = history[histIdx];
-      if(JSON.stringify(last) === JSON.stringify(gj)) return;
-      history = history.slice(0, histIdx+1);
-      history.push(gj); histIdx = history.length-1;
-      updateUndoRedoButtons();
-    }
-    function updateUndoRedoButtons(){
-      if(undoBtn) undoBtn.disabled = histIdx <= 0;
-      if(redoBtn) redoBtn.disabled = histIdx >= history.length-1;
-    }
-    function applyHistory(idx){
-      if(idx < 0 || idx >= history.length) return;
-      histIdx = idx; updateUndoRedoButtons();
-      const s = history[histIdx];
-      drawLayer.clearLayers();
-      if(s){
-        L.geoJSON(s, { style: f => ({ color: f.properties?.color || '#ffd43b', weight: 6, opacity: 0.9 }) })
-         .eachLayer(l => drawLayer.addLayer(l));
-      }
-      pushState();
-    }
-    undoBtn?.addEventListener('click', ()=> applyHistory(histIdx-1));
-    redoBtn?.addEventListener('click', ()=> applyHistory(histIdx+1));
-    window.addEventListener('keydown', (e)=>{
-      if(e.ctrlKey && e.key.toLowerCase()==='z'){ e.preventDefault(); applyHistory(histIdx-1); }
-      if(e.ctrlKey && (e.key.toLowerCase()==='y' || (e.shiftKey && e.key.toLowerCase()==='z'))){ e.preventDefault(); applyHistory(histIdx+1); }
-    });
-
-    // Crayon (freehand) + Gomme
-    let drawing = false; let erasing = false; let pathLL = [];
-    const PEN_WEIGHT = 6; const ERASER_PX = 14; // rayon gomme en pixels
-
-    function latLngsToPolyline(latlngs, color){
-      const pl = L.polyline(latlngs, { color: color||myColor, weight: PEN_WEIGHT, opacity: 0.9 });
-      drawLayer.addLayer(pl);
-      snapshotDrawings(); pushState();
-      return pl;
-    }
-    function distancePointToSeg(px, py, ax, ay, bx, by){
-      const dx = bx-ax, dy = by-ay; const len2 = dx*dx + dy*dy || 1;
-      const t = Math.max(0, Math.min(1, ((px-ax)*dx + (py-ay)*dy)/len2));
-      const sx = ax + t*dx, sy = ay + t*dy;
-      const ddx = px - sx, ddy = py - sy;
-      return Math.hypot(ddx, ddy);
-    }
-    function segmentTouchedByEraser(aLL, bLL, eraserPts){
-      const a = map.latLngToContainerPoint(aLL); const b = map.latLngToContainerPoint(bLL);
-      for(const e of eraserPts){
-        const ep = map.latLngToContainerPoint(e);
-        if(distancePointToSeg(ep.x, ep.y, a.x, a.y, b.x, b.y) <= ERASER_PX) return true;
-      }
-      return false;
-    }
-    function eraseAgainstPolyline(pl, eraserPts){
-      const ll = pl.getLatLngs(); if(ll.length < 2) { drawLayer.removeLayer(pl); return; }
-      let fragments = []; let cur = [ll[0]];
-      for(let i=0;i<ll.length-1;i++){
-        const a = ll[i], b = ll[i+1];
-        const hit = segmentTouchedByEraser(a,b,eraserPts);
-        if(hit){
-          if(cur.length>=2) fragments.push(cur);
-          cur = [b];
-        } else {
-          cur.push(b);
-        }
-      }
-      fragments = fragments.filter(seg => seg.length>=2);
-      drawLayer.removeLayer(pl);
-      if(cur.length>=2) fragments.push(cur);
-      fragments.forEach(seg => drawLayer.addLayer(L.polyline(seg, { color: pl.options.color||myColor, weight: PEN_WEIGHT, opacity: 0.9 })));
-    }
-
-    function beginFreeAction(){
-      pathLL = []; map.dragging.disable();
-      if(tool==='pen') { drawing = true; }
-      if(tool==='erase') { erasing = true; }
-    }
-    function updateFreeAction(e){
-      if(!(drawing||erasing)) return;
-      const ll = e.latlng; pathLL.push(ll);
-    }
-    function endFreeAction(){
-      if(drawing){
-        if(pathLL.length>=2){ latLngsToPolyline(pathLL, myColor); }
-        drawing = false; pathLL = []; map.dragging.enable();
-      } else if(erasing){
-        const erPts = pathLL.slice();
-        const toProcess = [];
-        drawLayer.eachLayer(l=>{ if(l instanceof L.Polyline){ toProcess.push(l); } });
-        toProcess.forEach(pl=> eraseAgainstPolyline(pl, erPts));
-        const cleanup = [];
-        drawLayer.eachLayer(l=>{ if(l instanceof L.Polyline){ const latlngs=l.getLatLngs(); if(latlngs.length<2) cleanup.push(l); } });
-        cleanup.forEach(l=> drawLayer.removeLayer(l));
-        snapshotDrawings(); pushState();
-        erasing = false; pathLL = []; map.dragging.enable();
-      }
-    }
-
-    map.on('mousedown', (e)=>{ if(tool==='pen'||tool==='erase') beginFreeAction(e); });
-    map.on('touchstart', (e)=>{ if(tool==='pen'||tool==='erase') beginFreeAction(e); });
-    map.on('mousemove', (e)=>{ if(tool==='pen'||tool==='erase') updateFreeAction(e); });
-    map.on('touchmove', (e)=>{ if(tool==='pen'||tool==='erase') { if(e.latlng) updateFreeAction(e); } });
-    map.on('mouseup', ()=>{ if(tool==='pen'||tool==='erase') endFreeAction(); });
-    map.on('touchend', ()=>{ if(tool==='pen'||tool==='erase') endFreeAction(); });
-
-    // outils de dessin (surlignage) — conservé pour compat/export
-    // Garder Leaflet.draw chargé mais NE PAS afficher ses barres par défaut
-    // === Toolbar par DÉFAUT Leaflet.draw (ligne, polygone, rectangle) + édition/suppression
+    // === Toolbar par défaut Leaflet.draw (ligne, polygone, rectangle) + édition/suppression
     const drawControl = new L.Control.Draw({
       edit: { featureGroup: drawLayer, remove: true },
       draw: {
@@ -307,29 +148,15 @@
     });
     map.addControl(drawControl);
 
-    // === Mini-toolbar UNDO/REDO (↶/↷) sous la toolbar Leaflet.draw
-    const UndoToolbar = L.Control.extend({
-      position: 'topleft',
-      onAdd: function(){
-        const d = L.DomUtil.create('div','leaflet-control undo-toolbar');
-        d.innerHTML = `<button id="ctlUndo" class="btn" title="Annuler (Ctrl+Z)">↶</button><button id="ctlRedo" class="btn" title="Rétablir (Ctrl+Y)">↷</button>`;
-        L.DomEvent.disableClickPropagation(d);
-        L.DomEvent.disableScrollPropagation(d);
-        d.querySelector('#ctlUndo').addEventListener('click', ()=> applyHistory(histIdx-1));
-        d.querySelector('#ctlRedo').addEventListener('click', ()=> applyHistory(histIdx+1));
-        return d;
-      }
-    });
-    map.addControl(new UndoToolbar());
+    // ====== (pas d'Undo/Redo) ======
+    let history = []; let histIdx = -1; // gardés pour compat
+    function snapshotDrawings(){}
+    function updateUndoRedoButtons(){}
 
-    // (Dock personnalisé supprimé : on utilise la toolbar Leaflet.draw par défaut + la mini-barre Undo/Redo)
+    let clickAdd = false;
 
-
-    // On encourage l'usage des nouveaux boutons Crayon/Gomme.
-
-    let clickAdd = false; // FIX: syntaxe correcte
-    let centerMarker = null; // draggable center
-    let circle = null;
+    let centerMarker = null; // centre
+    let circle = null;       // cercle
     let pois = [];
 
     // ====== Firebase init ======
@@ -383,16 +210,6 @@
       }
     }
 
-    function currentState(){
-      return {
-        center: centerMarker ? centerMarker.getLatLng() : map.getCenter(),
-        radius: Math.max(50, parseInt(radiusEl.value,10) || 300),
-        pois: pois,
-        drawings: exportDrawingsGeoJSON()
-      };
-    }
-
-    // Conserve la couleur/auteur dans les propriétés GeoJSON
     function exportDrawingsGeoJSON(){
       const fc = { type:'FeatureCollection', features: [] };
       drawLayer.eachLayer(l =>{
@@ -404,6 +221,14 @@
         fc.features.push(gj);
       });
       return fc;
+    }
+    function currentState(){
+      return {
+        center: centerMarker ? centerMarker.getLatLng() : map.getCenter(),
+        radius: Math.max(50, parseInt(radiusEl.value,10) || 300),
+        pois: pois,
+        drawings: exportDrawingsGeoJSON()
+      };
     }
 
     function applyState(s){
@@ -450,6 +275,49 @@
       roomRef.child('state').set(s);
     }
 
+    function joinRoom(code){
+      if(!code) { roomRef = null; roomInfo.textContent = 'Hors session'; return; }
+      roomRef = db.ref('rooms/'+code);
+      roomInfo.textContent = 'Session: '+code+' — connexion…';
+      setupPresence(code);
+      roomRef.child('state').on('value', snap => { const s = snap.val(); if(s) applyState(s); });
+      roomRef.child('state').once('value').then(snap => { if(!snap.exists()){ pushState(); } });
+    }
+
+    // === Auto-join via ?room=... (ex: ?room=MASC-42)
+    (function(){
+      const params = new URLSearchParams(location.search);
+      const roomFromUrl = params.get('room');
+      if (roomFromUrl) {
+        roomEl.value = roomFromUrl;
+        joinRoom(roomFromUrl);
+      }
+    })();
+
+    // === Share button: copie un lien prêt à partager avec ?room=
+    const shareBtn = document.getElementById('share');
+    if (shareBtn) {
+      shareBtn.addEventListener('click', async ()=>{
+        const code = roomEl.value.trim();
+        if (!code) { setStatus('Entrez un code de session avant de partager.'); return; }
+        const url = new URL(location.href);
+        url.searchParams.set('room', code);
+        try {
+          await navigator.clipboard.writeText(url.toString());
+          setStatus('Lien copié dans le presse-papiers.');
+        } catch {
+          prompt('Copiez ce lien :', url.toString());
+        }
+      });
+    }
+
+    joinBtn.addEventListener('click', ()=>{
+      const code = roomEl.value.trim();
+      if(!code){ roomRef = null; roomInfo.textContent = 'Hors session'; return; }
+      roomInfo.textContent = 'Session: '+code+' — connexion…';
+      joinRoom(code);
+    });
+
     // ====== Geocode (priorise Mascouche) ======
     async function geocode(q){
       const lang = (navigator.language || 'fr-CA');
@@ -476,21 +344,23 @@
       throw new Error('Adresse introuvable');
     }
 
-    // ====== Draw circle & center ======
-    function draw(lat, lon, radius){
+    // ====== Circle & center ======
+    function draw(lat, lon, radius, draggable = true){
       if (centerMarker) { map.removeLayer(centerMarker); }
       if (circle) { map.removeLayer(circle); }
-      centerMarker = L.marker([lat, lon], {
-        draggable: true,
-        icon: L.divIcon({ className: '', html: '<div class="pin"></div>', iconSize: [16,16], iconAnchor: [8,8] })
-      });
-      circle = L.circle([lat, lon], {
-        radius: radius, color:'#ff3b30', weight:3, fillColor:'#ff3b30', fillOpacity:.25, renderer:L.canvas()
-      });
+      const icon = L.divIcon({ className: '', html: '<div class="pin"></div>', iconSize: [16,16], iconAnchor: [8,8] });
+      centerMarker = L.marker([lat, lon], { draggable: !!draggable, icon });
+      circle = L.circle([lat, lon], { radius: radius, color:'#ff3b30', weight:3, fillColor:'#ff3b30', fillOpacity:.25, renderer:L.canvas() });
       centerMarker.addTo(map); circle.addTo(map);
-      centerMarker.on('drag', ()=>{ circle.setLatLng(centerMarker.getLatLng()); });
-      centerMarker.on('dragend', ()=>{ circle.setLatLng(centerMarker.getLatLng()); pushState(); });
+      if (draggable){
+        centerMarker.on('drag', ()=>{ circle.setLatLng(centerMarker.getLatLng()); });
+        centerMarker.on('dragend', ()=>{ circle.setLatLng(centerMarker.getLatLng()); pushState(); });
+      }
       map.fitBounds(circle.getBounds(), { padding: [30,30] });
+    }
+
+    function canCreateCircleNow(){
+      return !addrEl.value.trim() && !circle;
     }
 
     // ====== POIs ======
@@ -525,15 +395,57 @@
           if(err){ setStatus('Échec de l’export : ' + err.message); exportBtn.disabled = false; return; }
           try{
             const ctx = canvas.getContext('2d');
+            // ==== Dessins (Leaflet.draw) : peindre explicitement sur le canvas ====
+            (function renderDrawings(){
+              function pathFromLatLngs(latlngs, close){
+                if(!Array.isArray(latlngs) || latlngs.length===0) return;
+                const first = map.latLngToContainerPoint(latlngs[0]);
+                ctx.beginPath();
+                ctx.moveTo(first.x, first.y);
+                for(let i=1;i<latlngs.length;i++){
+                  const p = map.latLngToContainerPoint(latlngs[i]);
+                  ctx.lineTo(p.x, p.y);
+                }
+                if(close) ctx.closePath();
+              }
+              drawLayer.eachLayer(l=>{
+                const opt = l.options||{};
+                const color = opt.color || opt.fillColor || '#ffd43b';
+                const weight = Math.max(1, opt.weight||2);
+                if(l instanceof L.Polyline && !(l instanceof L.Polygon)){
+                  const latlngs = l.getLatLngs();
+                  const parts = Array.isArray(latlngs[0]) ? latlngs : [latlngs];
+                  parts.forEach(seg=>{
+                    pathFromLatLngs(seg, false);
+                    ctx.lineWidth = weight; ctx.strokeStyle = color; ctx.globalAlpha = opt.opacity ?? 1; ctx.stroke(); ctx.globalAlpha = 1;
+                  });
+                } else if(l instanceof L.Polygon){
+                  const rings = l.getLatLngs();
+                  rings.forEach(ring=>{
+                    const poly = Array.isArray(ring[0]) ? ring : [ring];
+                    poly.forEach(r=>{
+                      pathFromLatLngs(r, true);
+                      if(opt.fill !== false){ ctx.fillStyle = (opt.fillColor||color); ctx.globalAlpha = opt.fillOpacity ?? 0.3; ctx.fill(); ctx.globalAlpha = 1; }
+                      ctx.lineWidth = weight; ctx.strokeStyle = color; ctx.globalAlpha = opt.opacity ?? 1; ctx.stroke(); ctx.globalAlpha = 1;
+                    });
+                  });
+                }
+              });
+            })();
+
+            // ==== Cercle rayon (dessiné manuellement) ====
             let centerLL = circle?.getLatLng?.() || centerBackup || map.getCenter();
             const radiusMeters = Math.max(50, parseInt(radiusEl.value,10) || 300);
             const R = 6378137; const toRad = d=>d*Math.PI/180; const toDeg = r=>r*180/Math.PI;
             function destPoint(lat,lng,dist,bearing){ const δ=dist/R, θ=toRad(bearing), φ1=toRad(lat), λ1=toRad(lng); const sinφ1=Math.sin(φ1), cosφ1=Math.cos(φ1), sinδ=Math.sin(δ), cosδ=Math.cos(δ); const sinφ2=sinφ1*cosδ + cosφ1*sinδ*Math.cos(θ); const φ2=Math.asin(sinφ2); const y=Math.sin(θ)*sinδ*cosφ1; const x=cosδ - sinφ1*sinφ2; const λ2=λ1+Math.atan2(y,x); return {lat:toDeg(φ2), lng:((toDeg(λ2)+540)%360)-180}; }
             const centerPt = map.latLngToContainerPoint(centerLL); const eastLL = destPoint(centerLL.lat, centerLL.lng, radiusMeters, 90); const eastPt = map.latLngToContainerPoint(eastLL); const pixelRadius = Math.hypot(eastPt.x-centerPt.x, eastPt.y-centerPt.y);
             ctx.save(); ctx.beginPath(); ctx.arc(centerPt.x, centerPt.y, pixelRadius, 0, Math.PI*2); ctx.fillStyle='rgba(255,59,48,0.25)'; ctx.fill(); ctx.lineWidth=3; ctx.strokeStyle='#ff3b30'; ctx.stroke(); ctx.restore();
+
+            // Draw POIs (markers + labels)
             if (Array.isArray(pois)){
               pois.forEach(p=>{ const pt = map.latLngToContainerPoint([p.lat,p.lon]); ctx.save(); ctx.beginPath(); ctx.arc(pt.x, pt.y, 6, 0, Math.PI*2); ctx.fillStyle=p.color||'#ff3b30'; ctx.fill(); ctx.lineWidth=2; ctx.strokeStyle='#000'; ctx.stroke(); ctx.restore(); if(p.name){ ctx.save(); ctx.font='16px sans-serif'; ctx.textBaseline='middle'; ctx.lineWidth='3'; ctx.strokeStyle='rgba(255,255,255,0.95)'; ctx.strokeText(p.name, pt.x+10, pt.y); ctx.fillStyle='#111'; ctx.fillText(p.name, pt.x+10, pt.y); ctx.restore(); } });
             }
+            // Center dot
             ctx.save(); ctx.beginPath(); ctx.arc(centerPt.x, centerPt.y, 4, 0, Math.PI*2); ctx.fillStyle='#ff3b30'; ctx.fill(); ctx.restore();
 
             const DPI=300, W_IN=11, H_IN=8.5, MARGIN=0.5; const PAGE_W=Math.round(W_IN*DPI), PAGE_H=Math.round(H_IN*DPI); const INNER_W=Math.round((W_IN-2*MARGIN)*DPI), INNER_H=Math.round((H_IN-2*MARGIN)*DPI);
@@ -563,57 +475,53 @@
 
     addPoiBtn.addEventListener('click', ()=>{ const c=map.getCenter(); addPoi(c.lat, c.lng, poiNameEl.value.trim(), poiColorEl.value); });
     toggleClickBtn.addEventListener('click', ()=>{ clickAdd = !clickAdd; toggleClickBtn.textContent = 'Ajouter par clic : ' + (clickAdd ? 'ON' : 'OFF'); });
-    map.on('click', (e)=>{ if(clickAdd){ addPoi(e.latlng.lat, e.latlng.lng, poiNameEl.value.trim(), poiColorEl.value); } });
+    map.on('click', (e)=>{
+      if(clickAdd){
+        addPoi(e.latlng.lat, e.latlng.lng, poiNameEl.value.trim(), poiColorEl.value);
+      } else if (canCreateCircleNow()){
+        const r = Math.max(50, parseInt(radiusEl.value,10) || 300);
+        // Premier clic uniquement -> centre fixe (non déplaçable)
+        draw(e.latlng.lat, e.latlng.lng, r, true);
+        pushState();
+      }
+    });
     poiListEl.addEventListener('click', (e)=>{ if(e.target.classList.contains('del')){ const i=parseInt(e.target.dataset.i,10); if(!isNaN(i)){ pois.splice(i,1); rebuildPoiLayers(); renderPoiList(); pushState(); } } });
 
-    // ====== Room join / reset ======
-    function joinRoom(code){
-      if(!code) { roomRef = null; roomInfo.textContent = 'Hors session'; return; }
-      roomRef = db.ref('rooms/'+code);
-      roomInfo.textContent = 'Session: '+code+' — connexion…';
-      setupPresence(code);
-      roomRef.child('state').on('value', snap => { const s = snap.val(); if(s) applyState(s); });
-      roomRef.child('state').once('value').then(snap => { if(!snap.exists()){ pushState(); } });
-    }
-
-    // === Auto-join via ?room=... (ex: ?room=MASC-42)
-    (function(){
-      const params = new URLSearchParams(location.search);
-      const roomFromUrl = params.get('room');
-      if (roomFromUrl) {
-        roomEl.value = roomFromUrl;
-        joinRoom(roomFromUrl);
-      }
-    })();
-
-    // === Share button: copies a ready-to-share link with ?room=
-    const shareBtn = document.getElementById('share');
-    if (shareBtn) {
-      shareBtn.addEventListener('click', async ()=>{
+    // ====== Reset complet (quitte la session et nettoie la page) ======
+    function resetPage(){
+      try{
         const code = roomEl.value.trim();
-        if (!code) { setStatus('Entrez un code de session avant de partager.'); return; }
-        const url = new URL(location.href);
-        url.searchParams.set('room', code);
-        try {
-          await navigator.clipboard.writeText(url.toString());
-          setStatus('Lien copié dans le presse-papiers.');
-        } catch {
-          prompt('Copiez ce lien :', url.toString());
-        }
-      });
+        if(code && myUid){ db.ref('rooms/'+code+'/presence/'+myUid).remove().catch(()=>{}); }
+        if(roomRef){ roomRef.off(); roomRef = null; }
+      }catch{ /* ignore */ }
+
+      roomEl.value='';
+      roomInfo.textContent='Hors session';
+
+      // Nettoyer tous les calques et états
+      drawLayer.clearLayers();
+      history = []; histIdx = -1; updateUndoRedoButtons();
+      poiLayer.clearLayers();
+      pois = []; renderPoiList();
+      if(centerMarker){ map.removeLayer(centerMarker); centerMarker=null; }
+      if(circle){ map.removeLayer(circle); circle=null; }
+
+      // Réinitialiser les champs
+      addrEl.value='';
+      radiusEl.value=300;
+      clickAdd = false; if(toggleClickBtn) toggleClickBtn.textContent='Ajouter par clic : OFF';
+
+      // Enlever ?room= de l’URL
+      try{
+        const u = new URL(location.href);
+        u.searchParams.delete('room');
+        window.history.replaceState({},'',u);
+      }catch{ /* ignore */ }
+
+      setStatus('Page réinitialisée. Hors session.');
     }
-
-    joinBtn.addEventListener('click', ()=>{
-      const code = roomEl.value.trim();
-      if(!code){ roomRef = null; roomInfo.textContent = 'Hors session'; return; }
-      roomInfo.textContent = 'Session: '+code+' — connexion…';
-      joinRoom(code);
-    });
-
     resetBtn.addEventListener('click', ()=>{
-      const code = roomEl.value.trim(); if(!code || !roomRef) return;
-      if(!confirm('Réinitialiser la session « '+code+' » ? Tous les dessins/POI seront effacés.')) return;
-      roomRef.remove().then(()=>{ setStatus('Session réinitialisée.'); joinRoom(code); });
+      if(confirm('Tout réinitialiser et quitter la session ?')) resetPage();
     });
 
     // ====== (Mini) tests runtime — smoke + extra ======
@@ -625,14 +533,19 @@
         console.assert(app && app.options && app.options.projectId === 'carte-perimetre', 'projectId inattendu');
         console.assert(typeof geocode === 'function', 'geocode manquant');
         console.assert(typeof exportPNG === 'function', 'exportPNG manquant');
-        console.assert(typeof clickAdd === 'boolean' && clickAdd === false, 'clickAdd devrait être false au départ');
+        console.assert(typeof clickAdd === 'boolean', 'clickAdd type');
         console.assert(document.querySelector('.leaflet-draw-toolbar'), 'Toolbar Leaflet.draw absente');
         console.assert(document.querySelector('.leaflet-draw-edit-remove'), 'Bouton supprimer (gomme) absent');
-        console.assert(document.getElementById('ctlUndo') && document.getElementById('ctlRedo'), 'Undo/Redo absents');
-        // Tests supplémentaires
         console.assert(typeof applyState === 'function', 'applyState manquant');
         console.assert(typeof pushState === 'function', 'pushState manquant');
-        console.assert(typeof currentState === 'function', 'currentState manquant');
+        console.assert(typeof exportDrawingsGeoJSON === 'function', 'exportDrawingsGeoJSON manquant');
+        console.assert(typeof canCreateCircleNow === 'function', 'canCreateCircleNow manquant');
+        if(!circle && !addrEl.value.trim()){
+          console.assert(canCreateCircleNow()===true, 'canCreateCircleNow devrait être true sans cercle et sans adresse');
+        }
+        if(circle){
+          console.assert(canCreateCircleNow()===false, 'canCreateCircleNow devrait être false quand un cercle existe');
+        }
         console.log('[SelfTests] OK');
       } catch (e) {
         console.warn('[SelfTests] échec:', e);
@@ -646,8 +559,5 @@
 
   })();
   </script>
-</body>
-</html>
-
 </body>
 </html>

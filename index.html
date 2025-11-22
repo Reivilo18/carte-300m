@@ -564,6 +564,29 @@
     function rebuildPoiLayers(){ poiLayer.clearLayers(); pois.forEach(p=>{ const cm=L.circleMarker([p.lat,p.lon],{radius:6,color:p.color,weight:2,fillColor:p.color,fillOpacity:1,renderer:L.canvas()}).addTo(poiLayer); if(p.name){ cm.bindTooltip(p.name,{permanent:true,direction:'right',offset:[10,0]}); } }); }
     function addPoi(lat, lon, name, color){ pois.push({lat, lon, name: name||'', color: color||'#ff3b30'}); rebuildPoiLayers(); renderPoiList(); pushState(); }
 
+    // ====== POI deletion handlers ======
+    // Suppression depuis la liste (robuste)
+    if (poiListEl) {
+      poiListEl.addEventListener('click', (e)=>{
+        const btn = e.target.closest('button.del');
+        if(!btn) return;
+        const i = parseInt(btn.dataset.i, 10);
+        if(Number.isNaN(i)) return;
+        pois.splice(i,1);
+        rebuildPoiLayers();
+        renderPoiList();
+        pushState();
+      });
+    }
+    // Suppression via clic droit directement sur le POI sur la carte
+    function matchesPoi(ll, p){ return Math.abs(ll.lat - p.lat) < 1e-8 && Math.abs(ll.lng - p.lon) < 1e-8; }
+    poiLayer.on('contextmenu', (e)=>{
+      if(!e.layer || !e.layer.getLatLng) return;
+      const ll = e.layer.getLatLng();
+      const idx = pois.findIndex(p => matchesPoi(ll, p));
+      if(idx >= 0){ pois.splice(idx,1); rebuildPoiLayers(); renderPoiList(); pushState(); }
+    });
+
     // ====== Search/run ======
     async function run(){
       const q = addrEl.value.trim();
@@ -796,6 +819,4 @@
   })();
   </script>
 </body>
-</html>
-
 </html>
